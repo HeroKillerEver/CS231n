@@ -59,9 +59,9 @@ class CaptioningRNN(object):
 
         # Initialize parameters for the RNN
         dim_mul = {'lstm': 4, 'rnn': 1}[cell_type]
-        self.params['Wx'] = np.random.randn(wordvec_dim, dim_mul * hidden_dim)
+        self.params['Wx'] = np.random.randn(wordvec_dim, dim_mul * hidden_dim) #(D, 4H)
         self.params['Wx'] /= np.sqrt(wordvec_dim)
-        self.params['Wh'] = np.random.randn(hidden_dim, dim_mul * hidden_dim)
+        self.params['Wh'] = np.random.randn(hidden_dim, dim_mul * hidden_dim)  #(H, 4H)
         self.params['Wh'] /= np.sqrt(hidden_dim)
         self.params['b'] = np.zeros(dim_mul * hidden_dim)
 
@@ -139,11 +139,17 @@ class CaptioningRNN(object):
         ############################################################################
         h0 = features.dot(W_proj) + b_proj
         x, cache_x = word_embedding_forward(captions_in, W_embed)
-        h, cache_h = rnn_forward(x, h0, Wx, Wh, b)
+        if self.cell_type == 'rnn':
+            h, cache_h = rnn_forward(x, h0, Wx, Wh, b)
+        else:
+            h, cache_h = lstm_forward(x, h0, Wx, Wh, b)
         out, cache_out = temporal_affine_forward(h, W_vocab, b_vocab)
         loss, dout = temporal_softmax_loss(out, captions_out, mask) 
         dh, grads['W_vocab'], grads['b_vocab'] = temporal_affine_backward(dout, cache_out)
-        dx, dh0, grads['Wx'], grads['Wh'], grads['b'] = rnn_backward(dh, cache_h)
+        if self.cell_type == 'rnn':
+            dx, dh0, grads['Wx'], grads['Wh'], grads['b'] = rnn_backward(dh, cache_h)
+        else:
+            dx, dh0, grads['Wx'], grads['Wh'], grads['b'] = lstm_backward(dh, cache_h)
         grads['W_embed'] = word_embedding_backward(dx, cache_x)
         grads['W_proj'] = features.T.dot(dh0)
         grads['b_proj'] = np.sum(dh0, axis=0)
@@ -208,14 +214,20 @@ class CaptioningRNN(object):
         # functions; you'll need to call rnn_step_forward or lstm_step_forward in #
         # a loop.                                                                 #
         ###########################################################################
-        h0 = features.dot(W_proj) + b_proj 
+        h0 = features.dot(W_proj) + b_proj
+        c0 = np.zeros_like(h0) 
         x = W_embed[self._start]
         for i in xrange(max_length):
-            h, _ = rnn_step_forward(x, h0, Wx, Wh, b)
+            if self.cell_type == 'rnn':
+                h, _ = rnn_step_forward(x, h0, Wx, Wh, b)
+            else:
+                h, c, _ = lstm_step_forward(x, h0, c0, Wx, Wh, b)
             out = h.dot(W_vocab) + b_vocab
             best = np.argmax(out, axis=1)
             captions[:, i] = best
             h0 = h
+            if self.cell_type != 'rnn':
+                c0 = c
             x, _ = word_embedding_forward(best, W_embed) 
         
         ############################################################################
